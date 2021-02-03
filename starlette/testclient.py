@@ -98,6 +98,7 @@ class _ASGIAdapter(requests.adapters.HTTPAdapter):
     def send(
         self, request: requests.PreparedRequest, *args: typing.Any, **kwargs: typing.Any
     ) -> requests.Response:
+        # Co(lk): PreparedRequest -> scope
         scheme, netloc, path, query, fragment = (
             str(item) for item in urlsplit(request.url)
         )
@@ -142,6 +143,8 @@ class _ASGIAdapter(requests.adapters.HTTPAdapter):
                 "server": [host, port],
                 "subprotocols": subprotocols,
             }
+            # NOTE(lk): start processing ws req in a thread.
+            # return ws resp by raising exc, no kidding?
             session = WebSocketTestSession(self.app, scope)
             raise _Upgrade(session)
 
@@ -167,6 +170,7 @@ class _ASGIAdapter(requests.adapters.HTTPAdapter):
         context = None
 
         async def receive() -> Message:
+            # Send/return request body
             nonlocal request_complete, response_complete
 
             if request_complete:
@@ -237,6 +241,8 @@ class _ASGIAdapter(requests.adapters.HTTPAdapter):
             asyncio.set_event_loop(loop)
 
         try:
+            # Co(lk): call the app and let it handle the request in an event loop
+            #   resp dict is stored in raw_kwargs
             loop.run_until_complete(self.app(scope, receive, send))
         except BaseException as exc:
             if self.raise_server_exceptions:
@@ -254,7 +260,7 @@ class _ASGIAdapter(requests.adapters.HTTPAdapter):
                 "original_response": _MockOriginalResponse([]),
                 "body": io.BytesIO(),
             }
-
+        # Co(lk): convert resp dict from async app, into a requests Response
         raw = requests.packages.urllib3.HTTPResponse(**raw_kwargs)
         response = self.build_response(request, raw)
         if template is not None:
@@ -270,7 +276,9 @@ class WebSocketTestSession:
         self.accepted_subprotocol = None
         self._receive_queue = queue.Queue()  # type: queue.Queue
         self._send_queue = queue.Queue()  # type: queue.Queue
+        # Co(lk): start process ws req within a thread
         self._thread = threading.Thread(target=self._run)
+        # Co(lk): send, put into _receive_queue; receive, get resp from _send_queue
         self.send({"type": "websocket.connect"})
         self._thread.start()
         message = self.receive()
@@ -283,6 +291,7 @@ class WebSocketTestSession:
     def __exit__(self, *args: typing.Any) -> None:
         self.close(1000)
         self._thread.join()
+        # Co(lk): exhaust resp before exit
         while not self._send_queue.empty():
             message = self._send_queue.get()
             if isinstance(message, BaseException):
@@ -384,6 +393,7 @@ class TestClient(requests.Session):
             raise_server_exceptions=raise_server_exceptions,
             root_path=root_path,
         )
+        # Co(lk): register conn adapter
         self.mount("http://", adapter)
         self.mount("https://", adapter)
         self.mount("ws://", adapter)
@@ -445,6 +455,7 @@ class TestClient(requests.Session):
         try:
             super().request("GET", url, **kwargs)
         except _Upgrade as exc:
+            # Co(lk): sess/resp is got by catch exc
             session = exc.session
         else:
             raise RuntimeError("Expected WebSocket upgrade")  # pragma: no cover
@@ -455,6 +466,7 @@ class TestClient(requests.Session):
         loop = asyncio.get_event_loop()
         self.send_queue = asyncio.Queue()  # type: asyncio.Queue
         self.receive_queue = asyncio.Queue()  # type: asyncio.Queue
+        # NOTE(lk): .create_task() schedules the execution of the task
         self.task = loop.create_task(self.lifespan())
         loop.run_until_complete(self.wait_startup())
         return self
@@ -472,8 +484,10 @@ class TestClient(requests.Session):
 
     async def wait_startup(self) -> None:
         await self.receive_queue.put({"type": "lifespan.startup"})
+        # Co(lk): lifespan task already started in __enter__
         message = await self.send_queue.get()
         if message is None:
+            # Co(lk): return task result
             self.task.result()
         assert message["type"] in (
             "lifespan.startup.complete",

@@ -50,6 +50,7 @@ class StaticFiles:
     ) -> None:
         self.directory = directory
         self.packages = packages
+        # Co(lk): get dir passed from param, and "static" folders in pacakges
         self.all_directories = self.get_directories(directory, packages)
         self.html = html
         self.config_checked = False
@@ -90,6 +91,7 @@ class StaticFiles:
         assert scope["type"] == "http"
 
         if not self.config_checked:
+            # Co(lk): check the passes in dir (not all dirs)
             await self.check_config()
             self.config_checked = True
 
@@ -144,6 +146,7 @@ class StaticFiles:
         self, path: str
     ) -> typing.Tuple[str, typing.Optional[os.stat_result]]:
         for directory in self.all_directories:
+            # Co(lk): realpath, resolves symlinks
             full_path = os.path.realpath(os.path.join(directory, path))
             directory = os.path.realpath(directory)
             if os.path.commonprefix([full_path, directory]) != directory:

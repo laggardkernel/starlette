@@ -22,7 +22,9 @@ class SessionMiddleware:
     ) -> None:
         self.app = app
         self.signer = itsdangerous.TimestampSigner(str(secret_key))
+        # Co(lk): cookie name for session
         self.session_cookie = session_cookie
+        # Co(lk): max_age unit seconds
         self.max_age = max_age
         self.security_flags = "httponly; samesite=" + same_site
         if https_only:  # Secure flag can be used with HTTPS only

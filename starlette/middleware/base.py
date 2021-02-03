@@ -26,6 +26,12 @@ class BaseHTTPMiddleware:
         await response(scope, receive, send)
 
     async def call_next(self, request: Request) -> Response:
+        """
+        Co(lk):
+        https://github.com/encode/starlette/issues/919#issuecomment-665477901
+        Comment: breaks BackgroundTask cause StreamResponse doesn't exit until
+        the app being wrapped has completed -- when task.result() is called.
+        """
         loop = asyncio.get_event_loop()
         queue: "asyncio.Queue[typing.Optional[Message]]" = asyncio.Queue()
 
@@ -35,6 +41,8 @@ class BaseHTTPMiddleware:
 
         async def coro() -> None:
             try:
+                # Co(lk): intercepts send(), get response from inner middleware by queue
+                # Comment: BackgroundTask is awaited, but in an async Task
                 await self.app(scope, receive, send)
             finally:
                 await queue.put(None)
@@ -44,8 +52,15 @@ class BaseHTTPMiddleware:
         if message is None:
             task.result()
             raise RuntimeError("No response returned.")
+        # TODO(lk): why stream, for better handling different res from inner handlers?
+        # When subclass override dispatch(), a response should be provided by call_next()
+        # to let the subclass modify the resp obj.
+        # In fact, the inner Router send req to one of the Route, and call Response.__call__(),
+        # which at last call "send()" to send the resp content.
+        # BaseHTTPMiddleware replaces the real "send" and let Route cache the content
+        # in a queue, later it's composed into StreamingResponse, which is more general
+        # than the HTML, PlainText, File resp.
         assert message["type"] == "http.response.start"
-
         async def body_stream() -> typing.AsyncGenerator[bytes, None]:
             while True:
                 message = await queue.get()
@@ -53,6 +68,8 @@ class BaseHTTPMiddleware:
                     break
                 assert message["type"] == "http.response.body"
                 yield message.get("body", b"")
+            # Co(lk): StreamResponse doesn't finish sending until async Task is completed
+            # the conn may be kept open on some client.
             task.result()
 
         response = StreamingResponse(

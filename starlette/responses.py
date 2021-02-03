@@ -30,6 +30,7 @@ def guess_type(
     url: typing.Union[str, "os.PathLike[str]"], strict: bool = True
 ) -> typing.Tuple[typing.Optional[str], typing.Optional[str]]:
     if sys.version_info < (3, 8):  # pragma: no cover
+        # Co(lk): filesystem representation of the path
         url = os.fspath(url)
     return mimetypes_guess_type(url, strict)
 
@@ -120,6 +121,7 @@ class Response:
         if httponly:
             cookie[key]["httponly"] = True
         if samesite is not None:
+            # Co(lk): ref https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie/SameSite
             assert samesite.lower() in [
                 "strict",
                 "lax",
@@ -142,6 +144,7 @@ class Response:
         )
         await send({"type": "http.response.body", "body": self.body})
 
+        # Co(lk): background is not a real backgroud, inited after resp is sent.
         if self.background is not None:
             await self.background()
 
@@ -193,6 +196,7 @@ class StreamingResponse(Response):
         if isinstance(content, typing.AsyncIterable):
             self.body_iterator = content
         else:
+            # Co(lk): for a sync iterable, run in threadpool(current loop)
             self.body_iterator = iterate_in_threadpool(content)
         self.status_code = status_code
         self.media_type = self.media_type if media_type is None else media_type
@@ -221,11 +225,17 @@ class StreamingResponse(Response):
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Co(lk): wait the following 2 tasks, exit on 1st completed
         await run_until_first_complete(
             (self.stream_response, {"send": send}),
             (self.listen_for_disconnect, {"receive": receive}),
         )
 
+        # Co(lk): Doesn't work with BaseHTTPMiddleware.
+        #   https://github.com/encode/starlette/issues/919
+        # This is not a problem specific to stream resp. It applies to FileResponse
+        # class as well. But the static files could be served at uppper server like
+        # Nginx.
         if self.background is not None:
             await self.background()
 

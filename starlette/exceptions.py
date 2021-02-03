@@ -48,12 +48,15 @@ class ExceptionMiddleware:
     def _lookup_exception_handler(
         self, exc: Exception
     ) -> typing.Optional[typing.Callable]:
+        # Co(lk): search handler through exc MRO, uses parent-classes' handlers for
+        #   current exception
         for cls in type(exc).__mro__:
             if cls in self._exception_handlers:
                 return self._exception_handlers[cls]
         return None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Co(lk): closure, modify the calling process of the passed-in app
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -93,6 +96,7 @@ class ExceptionMiddleware:
             await response(scope, receive, sender)
 
     def http_exception(self, request: Request, exc: HTTPException) -> Response:
+        # Co(lk): 204 no content, 304 not mofified. No resp body is needed.
         if exc.status_code in {204, 304}:
             return Response(b"", status_code=exc.status_code)
         return PlainTextResponse(exc.detail, status_code=exc.status_code)

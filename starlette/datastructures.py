@@ -253,7 +253,9 @@ class ImmutableMultiDict(typing.Mapping):
 
         if kwargs:
             value = (
+                # Co(lk): 1st positional arg
                 ImmutableMultiDict(value).multi_items()
+                # Co(lk): kwargs is passed as dict as the 1st arg
                 + ImmutableMultiDict(kwargs).multi_items()
             )
 
@@ -271,6 +273,7 @@ class ImmutableMultiDict(typing.Mapping):
             )
             _items = list(value)
 
+        # Co(lk): stored as {key: list} dict, or [(key, value)] list
         self._dict = {k: v for k, v in _items}
         self._list = _items
 
@@ -290,6 +293,7 @@ class ImmutableMultiDict(typing.Mapping):
         return list(self._list)
 
     def get(self, key: typing.Any, default: typing.Any = None) -> typing.Any:
+        # Co(lk): set() in MultiDict, get() only returns 1 value, latest added
         if key in self._dict:
             return self._dict[key]
         return default

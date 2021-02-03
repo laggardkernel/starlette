@@ -119,6 +119,7 @@ def compile_path(
         convertor = CONVERTOR_TYPES[convertor_type]
 
         path_regex += re.escape(path[idx : match.start()])
+        # Co(lk): replace the matched content with regex
         path_regex += f"(?P<{param_name}>{convertor.regex})"
 
         path_format += path[idx : match.start()]
@@ -185,6 +186,7 @@ class Route(BaseRoute):
             endpoint_handler = endpoint_handler.func
         if inspect.isfunction(endpoint_handler) or inspect.ismethod(endpoint_handler):
             # Endpoint is function or method. Treat it as `func(request) -> response`.
+            # Co(lk): wrap endpoint func with app, which convert scope into req and pass it to endpoint
             self.app = request_response(endpoint)
             if methods is None:
                 methods = ["GET"]
@@ -212,7 +214,9 @@ class Route(BaseRoute):
                 path_params.update(matched_params)
                 child_scope = {"endpoint": self.endpoint, "path_params": path_params}
                 if self.methods and scope["method"] not in self.methods:
+                    # Co(lk): PARTIAL match: url match but not method
                     return Match.PARTIAL, child_scope
+                    # return matched view func, args
                 else:
                     return Match.FULL, child_scope
         return Match.NONE, {}
@@ -222,6 +226,7 @@ class Route(BaseRoute):
         expected_params = set(self.param_convertors.keys())
 
         if name != self.name or seen_params != expected_params:
+            # TODO: Flask treat extra param as query param? Not sure.
             raise NoMatchFound()
 
         path, remaining_params = replace_params(
@@ -233,6 +238,8 @@ class Route(BaseRoute):
     async def handle(self, scope: Scope, receive: Receive, send: Send) -> None:
         if self.methods and scope["method"] not in self.methods:
             if "app" in scope:
+                # Co(lk): app is set, we're in an Starlette app, raise it as exc
+                #   to be handled by handler. Otherwise, no starlette app, return plain resp
                 raise HTTPException(status_code=405)
             else:
                 response = PlainTextResponse("Method Not Allowed", status_code=405)
@@ -277,6 +284,7 @@ class WebSocketRoute(BaseRoute):
                 path_params = dict(scope.get("path_params", {}))
                 path_params.update(matched_params)
                 child_scope = {"endpoint": self.endpoint, "path_params": path_params}
+                # Co(lk): No partial match in websocket route
                 return Match.FULL, child_scope
         return Match.NONE, {}
 
@@ -304,7 +312,7 @@ class WebSocketRoute(BaseRoute):
         )
 
 
-class Mount(BaseRoute):
+class Mount(BaseRoute):  # Co(lk): RouteGroup implementation, like Blueprint
     def __init__(
         self,
         path: str,
@@ -316,6 +324,7 @@ class Mount(BaseRoute):
         assert (
             app is not None or routes is not None
         ), "Either 'app=...', or 'routes=' must be specified"
+        # Co(lk): path prefix
         self.path = path.rstrip("/")
         if app is not None:
             self.app = app  # type: ASGIApp
@@ -346,6 +355,7 @@ class Mount(BaseRoute):
                 child_scope = {
                     "path_params": path_params,
                     "app_root_path": scope.get("app_root_path", root_path),
+                    # Co(lk): shift matched prefix to root_path
                     "root_path": root_path + matched_path,
                     "path": remaining_path,
                     "endpoint": self.app,
@@ -354,6 +364,9 @@ class Mount(BaseRoute):
         return Match.NONE, {}
 
     def url_path_for(self, name: str, **path_params: str) -> URLPath:
+        # Co(lk): if matches current Mount explicitly, and "path" in param.
+        #   Then build url from current mount, not sub-routes?
+        #   "path" is not consumed in sub-route.
         if self.name is not None and name == self.name and "path" in path_params:
             # 'name' matches "<mount_name>".
             path_params["path"] = path_params["path"].lstrip("/")
@@ -362,6 +375,7 @@ class Mount(BaseRoute):
             )
             if not remaining_params:
                 return URLPath(path=path)
+        # Co(lk): build url from sub-route, with "bp:view_name"
         elif self.name is None or name.startswith(self.name + ":"):
             if self.name is None:
                 # No mount name.
@@ -369,6 +383,8 @@ class Mount(BaseRoute):
             else:
                 # 'name' matches "<mount_name>:<child_name>".
                 remaining_name = name[len(self.name) + 1 :]
+            # Co(lk): path param is used in sub, specific route, not current Mount.
+            #   Fill <path:path> in current Mount with "" on purpose, then path_prefix.rstrip("/")
             path_kwarg = path_params.get("path")
             path_params["path"] = ""
             path_prefix, remaining_params = replace_params(
@@ -397,7 +413,7 @@ class Mount(BaseRoute):
         )
 
 
-class Host(BaseRoute):
+class Host(BaseRoute):  # Co(lk): Host header, wraps an app
     def __init__(self, host: str, app: ASGIApp, name: str = None) -> None:
         self.host = host
         self.app = app
@@ -424,6 +440,8 @@ class Host(BaseRoute):
         return Match.NONE, {}
 
     def url_path_for(self, name: str, **path_params: str) -> URLPath:
+        # Co(lk): "path" in Host is different with "path" in Mount.
+        #   "path" in Mount is path for sub-route mathcing.
         if self.name is not None and name == self.name and "path" in path_params:
             # 'name' matches "<mount_name>".
             path = path_params.pop("path")
@@ -478,6 +496,7 @@ class Router:
         self.on_shutdown = [] if on_shutdown is None else list(on_shutdown)
 
         async def default_lifespan(app: typing.Any) -> typing.AsyncGenerator:
+            # Co(lk): trigger on type lifespan
             await self.startup()
             yield
             await self.shutdown()
@@ -554,6 +573,7 @@ class Router:
                 await send({"type": "lifespan.startup.failed", "message": exc_text})
             raise
         else:
+            # TODO(lk): how lifespan event works, why shutdown here
             await send({"type": "lifespan.shutdown.complete"})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -562,6 +582,7 @@ class Router:
         """
         assert scope["type"] in ("http", "websocket", "lifespan")
 
+        # Co(lk): set itself into scope for communication with App, Route, Request
         if "router" not in scope:
             scope["router"] = self
 
@@ -576,6 +597,7 @@ class Router:
             # and hand over to the matching route if found.
             match, child_scope = route.matches(scope)
             if match == Match.FULL:
+                # Co(lk): get endpoint func, matched args
                 scope.update(child_scope)
                 await route.handle(scope, receive, send)
                 return
@@ -593,6 +615,7 @@ class Router:
 
         if scope["type"] == "http" and self.redirect_slashes and scope["path"] != "/":
             redirect_scope = dict(scope)
+            # Co(lk): slash <-> non-slash, different with Flask
             if scope["path"].endswith("/"):
                 redirect_scope["path"] = redirect_scope["path"].rstrip("/")
             else:

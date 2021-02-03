@@ -92,6 +92,7 @@ class HTTPConnection(Mapping):
             base_url_scope["root_path"] = base_url_scope.get(
                 "app_root_path", base_url_scope.get("root_path", "")
             )
+            # Co(lk): base url, no qs
             self._base_url = URL(scope=base_url_scope)
         return self._base_url
 
@@ -109,6 +110,7 @@ class HTTPConnection(Mapping):
 
     @property
     def path_params(self) -> dict:
+        # Co(lk): path param is variable from template uri (e.g. /{name:str}/)
         return self.scope.get("path_params", {})
 
     @property
@@ -118,6 +120,7 @@ class HTTPConnection(Mapping):
             cookie_header = self.headers.get("cookie")
 
             if cookie_header:
+                # Co(lk): parse Cookie header into dict
                 cookies = cookie_parser(cookie_header)
             self._cookies = cookies
         return self._cookies

@@ -53,6 +53,7 @@ class Jinja2Templates:
         self.env = self.get_env(directory)
 
     def get_env(self, directory: str) -> "jinja2.Environment":
+        # Co(lk): jinja url_for() -> Request.url_for() -> Router.url_path_for()
         @jinja2.contextfunction
         def url_for(context: dict, name: str, **path_params: typing.Any) -> str:
             request = context["request"]

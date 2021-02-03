@@ -23,7 +23,9 @@ class WebSocket(HTTPConnection):
         assert scope["type"] == "websocket"
         self._receive = receive
         self._send = send
+        # Co(lk): state as the client/sender
         self.client_state = WebSocketState.CONNECTING
+        # Co(lk): state as the sender
         self.application_state = WebSocketState.CONNECTING
 
     async def receive(self) -> Message:
@@ -70,6 +72,7 @@ class WebSocket(HTTPConnection):
             raise RuntimeError('Cannot call "send" once a close message has been sent.')
 
     async def accept(self, subprotocol: str = None) -> None:
+        # Co(lk): accept ws conn
         if self.client_state == WebSocketState.CONNECTING:
             # If we haven't yet seen the 'connect' message, then wait for it first.
             await self.receive()

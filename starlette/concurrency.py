@@ -41,6 +41,8 @@ async def run_in_threadpool(
 
 
 class _StopIteration(Exception):
+    # Co(lk): define custom exc, to bypass interception of original StopIteration
+    #   in the event loop
     pass
 
 

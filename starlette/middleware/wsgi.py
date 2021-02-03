@@ -78,6 +78,7 @@ class WSGIResponder:
     async def __call__(self, receive: Receive, send: Send) -> None:
         body = b""
         more_body = True
+        # Co(lk): receive all body once, and build an environ from scope, body
         while more_body:
             message = await receive()
             body += message.get("body", b"")
@@ -100,12 +101,14 @@ class WSGIResponder:
 
     async def sender(self, send: Send) -> None:
         while True:
+            # Co(lk): send message or wait the event to continue to next loop
             if self.send_queue:
                 message = self.send_queue.pop(0)
                 if message is None:
                     return
                 await send(message)
             else:
+                # Co(lk): event is waited to avoid a 0 interval loop
                 await self.send_event.wait()
                 self.send_event.clear()
 
@@ -138,6 +141,7 @@ class WSGIResponder:
             self.send_queue.append(
                 {"type": "http.response.body", "body": chunk, "more_body": True}
             )
+            # Co(lk): event is used to avoid 0 interval loop in send.
             self.loop.call_soon_threadsafe(self.send_event.set)
 
         self.send_queue.append({"type": "http.response.body", "body": b""})

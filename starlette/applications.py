@@ -55,6 +55,7 @@ class Starlette:
         ), "Use either 'lifespan' or 'on_startup'/'on_shutdown', not both."
 
         self._debug = debug
+        # Co(lk): State.state: dict
         self.state = State()
         self.router = Router(
             routes, on_startup=on_startup, on_shutdown=on_shutdown, lifespan=lifespan
@@ -63,7 +64,16 @@ class Starlette:
             {} if exception_handlers is None else dict(exception_handlers)
         )
         self.user_middleware = [] if middleware is None else list(middleware)
+        # Co(lk): build_middleware_stack
+        # middleware are closure or decorators, intercept the app calling process
+        # and inject their own action before or after.
+        # build_middleware_stack() call all these mws and return the modified app
         self.middleware_stack = self.build_middleware_stack()
+        """
+        In starlette, most of the class in the main call chain are app/callable
+        satisfies callable(scope, receive, send), including 
+        Starlette, Router, Route, Request ...
+        """
 
     def build_middleware_stack(self) -> ASGIApp:
         debug = self.debug
@@ -87,6 +97,8 @@ class Starlette:
         )
 
         app = self.router
+        # Co(lk): wrap the orig mw in with mws in reversed order. From inner to outside
+        # ExceptionMiddleware, user defined mw, ServerErrorMiddleware
         for cls, options in reversed(middleware):
             app = cls(app=app, **options)
         return app
@@ -102,27 +114,35 @@ class Starlette:
     @debug.setter
     def debug(self, value: bool) -> None:
         self._debug = value
+        # Co(lk): trigger mw stack rebuild on debug state changes
         self.middleware_stack = self.build_middleware_stack()
 
     def url_path_for(self, name: str, **path_params: str) -> URLPath:
         return self.router.url_path_for(name, **path_params)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Co(lk): set app itself in scope for communication with Router, Route, Request
         scope["app"] = self
+        # Co(lk): call the wrapped/modified app
         await self.middleware_stack(scope, receive, send)
 
     # The following usages are now discouraged in favour of configuration
     #  during Starlette.__init__(...)
+    # Co(lk): NBSP. for continuation in sphinx doc?
     def on_event(self, event_type: str) -> typing.Callable:
         return self.router.on_event(event_type)
+        # Co(lk): event hander is registerd/stored on Rotuer
 
     def mount(self, path: str, app: ASGIApp, name: str = None) -> None:
+        # Co(lk): mount routes under a subpath. equivalent to blueprint
         self.router.mount(path, app=app, name=name)
 
     def host(self, host: str, app: ASGIApp, name: str = None) -> None:
+        # Co(lk): mount routes under a different host
         self.router.host(host, app=app, name=name)
 
     def add_middleware(self, middleware_class: type, **options: typing.Any) -> None:
+        # Co(lk): cause mws are called in reversed order in stack building
         self.user_middleware.insert(0, Middleware(middleware_class, **options))
         self.middleware_stack = self.build_middleware_stack()
 

@@ -84,6 +84,7 @@ class Config:
                 if "=" in line and not line.startswith("#"):
                     key, value = line.split("=", 1)
                     key = key.strip()
+                    # Co(lk): strip quoting
                     value = value.strip().strip("\"'")
                     file_values[key] = value
         return file_values
